@@ -1,6 +1,7 @@
 module Main where
+
 import System.Environment
-import Lib
+import SchemeParser
 
 main :: IO ()
 main = do
