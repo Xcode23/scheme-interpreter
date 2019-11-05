@@ -6,6 +6,8 @@ import Text.ParserCombinators.Parsec hiding (spaces)
 import System.Environment 
 import Control.Monad
 import Numeric
+import Data.Ratio
+import Data.Complex
 
 data LispVal = Atom String
              | List [LispVal]
@@ -13,6 +15,10 @@ data LispVal = Atom String
              | Number Integer
              | String String
              | Bool Bool
+             | Character Char
+             | Float Double
+             | Ratio Rational
+             | Complex (Complex Double)
              deriving Show
 
 symbol :: Parser Char
@@ -97,11 +103,51 @@ parseNumber = myParseDecimal
               <|> parseBin
               <|> parseOct
 
+parseCharacter :: Parser LispVal
+parseCharacter = do
+                  try $ string "#\\"
+                  value <- try (string "newline" <|> string "space")
+                    <|> do { x <- anyChar; notFollowedBy alphaNum ; return [x]}
+                  return $ Character $ case value of 
+                                         "space"    -> ' '
+                                         "newline"  -> '\n'
+                                         otherwise  -> (head value)
+
+parseFloat :: Parser LispVal
+parseFloat = do
+              x <- many1 digit
+              char '.'
+              y <- many1 digit
+              return $ Float (fst.head $ readFloat (x++"."++y))
+
+parseRatio :: Parser LispVal
+parseRatio = do
+              x <- many1 digit
+              char '/'
+              y <- many1 digit
+              return $ Ratio (read x % read y)
+
+toDouble :: LispVal -> Double
+toDouble (Float d) = d
+toDouble (Number n) = fromInteger n
+  
+parseComplex :: Parser LispVal
+parseComplex = do
+                x <- (try parseFloat <|> parseDecimal)
+                char '+'
+                y <- (try parseFloat <|> parseDecimal)
+                char 'i'
+                return $ Complex (toDouble x :+ toDouble y)
+
 parseExpr :: Parser LispVal
-parseExpr = parseBool
+parseExpr = parseAtom
             <|> parseString
-            <|> parseNumber
-            <|> parseAtom
+            <|> try parseComplex
+            <|> try parseFloat
+            <|> try parseRatio
+            <|> try parseNumber
+            <|> try parseBool
+            <|> try parseCharacter 
 
 readExpr :: String -> String
 readExpr input = case parse parseExpr "lisp" input of
