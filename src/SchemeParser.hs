@@ -7,10 +7,12 @@ import Control.Monad
 import Numeric
 import Data.Ratio
 import Data.Complex
+import qualified Data.Vector as V
 
 data LispVal = Atom String
              | List [LispVal]
              | DottedList [LispVal] LispVal
+             | Vector (V.Vector LispVal)
              | Number Integer
              | String String
              | Bool Bool
@@ -18,7 +20,8 @@ data LispVal = Atom String
              | Float Double
              | Ratio Rational
              | Complex (Complex Double)
-             deriving Show
+
+instance Show LispVal where show = showVal
 
 symbol :: Parser Char
 symbol = oneOf "!$%&|*+-/:<=>?@^_~"
@@ -165,6 +168,11 @@ parseUnQuote = do
                 x <- parseExpr
                 return $ List [Atom "unquote", x]
 
+parseVector :: Parser LispVal
+parseVector = do 
+                vectorValues <- sepBy parseExpr spaces
+                return $ Vector (V.fromList vectorValues)
+
 parseExpr :: Parser LispVal
 parseExpr = parseAtom
             <|> parseString
@@ -177,13 +185,35 @@ parseExpr = parseAtom
             <|> parseQuoted 
             <|> parseQuasiQuoted
             <|> parseUnQuote
-            <|> do char '('
-                   x <- try parseList <|> parseDottedList 
-                   char ')'
-                   return x
+            <|> try  (do
+                        string "#("
+                        x <- parseVector 
+                        char ')'
+                        return x)
+            <|> do 
+                  char '('
+                  x <- try parseList <|> parseDottedList 
+                  char ')'
+                  return x
 
 readExpr :: String -> String
 readExpr input = case parse parseExpr "lisp" input of
                    Left err -> "No match: " ++ show err
                    Right val -> show val
 
+showVal :: LispVal -> String
+showVal (String string) = "\"" ++ string ++ "\""
+showVal (Atom name) = name
+showVal (Number num) = show num
+showVal (Bool value) = if value then "#t" else "#false"
+showVal (List contents) = "(" ++ unwordsLispVal contents ++ ")"
+showVal (DottedList head tail) = "(" ++ unwordsLispVal head ++ " . " ++ showVal tail ++ ")"
+showVal (Vector vector) = "#(" ++ (unwordsLispVal $ V.toList vector) ++ ")"
+showVal (Float value) = show value 
+showVal (Ratio value) = undefined
+showVal (Complex value) = undefined
+showVal (Character char) | char == '\n' = "#\\newline"
+                         | char == ' '  = "#\\space"
+                         | otherwise    = "#\\" ++ [char]
+
+unwordsLispVal = unwords . map showVal
