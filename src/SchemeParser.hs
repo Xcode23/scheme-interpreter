@@ -1,5 +1,5 @@
 module SchemeParser 
-  (readExpr) where
+  (readExpr, LispVal(..)) where
 
 import Text.ParserCombinators.Parsec hiding (spaces)
 import System.Environment 
@@ -196,10 +196,10 @@ parseExpr = parseAtom
                   char ')'
                   return x
 
-readExpr :: String -> String
+readExpr :: String -> LispVal
 readExpr input = case parse parseExpr "lisp" input of
-                   Left err -> "No match: " ++ show err
-                   Right val -> show val
+                   Left err  -> String $ "No match: " ++ show err
+                   Right val -> val
 
 showVal :: LispVal -> String
 showVal (String string) = "\"" ++ string ++ "\""
@@ -210,8 +210,8 @@ showVal (List contents) = "(" ++ unwordsLispVal contents ++ ")"
 showVal (DottedList head tail) = "(" ++ unwordsLispVal head ++ " . " ++ showVal tail ++ ")"
 showVal (Vector vector) = "#(" ++ (unwordsLispVal $ V.toList vector) ++ ")"
 showVal (Float value) = show value 
-showVal (Ratio value) = undefined
-showVal (Complex value) = undefined
+showVal (Ratio value) = show (numerator value) ++ "/" ++ show (denominator value)
+showVal (Complex value) = show (realPart value) ++ "+" ++ show (imagPart value) ++ "i"
 showVal (Character char) | char == '\n' = "#\\newline"
                          | char == ' '  = "#\\space"
                          | otherwise    = "#\\" ++ [char]
