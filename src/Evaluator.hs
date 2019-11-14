@@ -1,6 +1,16 @@
 module Evaluator (readExpr, eval) where
 
 import SchemeParser
+import Text.ParserCombinators.Parsec
+import Control.Monad.Except
+
+data LispError = NumArgs Integer [LispVal]
+               | TypeMismatch String LispVal
+               | Parser ParseError
+               | BadSpecialForm String LispVal
+               | NotFunction String String 
+               | UnboundVar String String 
+               | Default String
 
 eval :: LispVal -> LispVal
 eval val@(String _) = val
@@ -37,9 +47,9 @@ numericBinop op params = Number $ foldl1 op $ map unpackNum params
 unpackNum :: LispVal -> Integer
 unpackNum (Number n) = n
 unpackNum (String s) = let parsed = reads s :: [(Integer, String)] 
-                          in if null parsed
-                              then 0
-                              else fst $ parsed !! 0
+                        in if null parsed
+                            then 0
+                            else fst $ parsed !! 0
 unpackNum (List [n]) = unpackNum n
 unpackNum _ = 0
 
