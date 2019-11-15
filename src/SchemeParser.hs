@@ -1,27 +1,14 @@
 module SchemeParser 
-  (readExpr, LispVal(..), unwordsList) where
+  (readExpr) where
 
 import Text.ParserCombinators.Parsec hiding (spaces)
-import System.Environment 
 import Control.Monad
 import Numeric
 import Data.Ratio
 import Data.Complex
 import qualified Data.Vector as V
-
-data LispVal = Atom String
-             | List [LispVal]
-             | DottedList [LispVal] LispVal
-             | Vector (V.Vector LispVal)
-             | Number Integer
-             | String String
-             | Bool Bool
-             | Character Char
-             | Float Double
-             | Ratio Rational
-             | Complex (Complex Double)
-
-instance Show LispVal where show = showVal
+import CommonTypes
+import Control.Monad.Except
 
 symbol :: Parser Char
 symbol = oneOf "!$%&|*+-/:<=>?@^_~"
@@ -196,24 +183,7 @@ parseExpr = parseAtom
                   char ')'
                   return x
 
-readExpr :: String -> LispVal
+readExpr :: String -> ThrowsError LispVal
 readExpr input = case parse parseExpr "lisp" input of
-                   Left err  -> String $ "No match: " ++ show err
-                   Right val -> val
-
-showVal :: LispVal -> String
-showVal (String string) = "\"" ++ string ++ "\""
-showVal (Atom name) = name
-showVal (Number num) = show num
-showVal (Bool value) = if value then "#t" else "#false"
-showVal (List contents) = "(" ++ unwordsList contents ++ ")"
-showVal (DottedList head tail) = "(" ++ unwordsList head ++ " . " ++ showVal tail ++ ")"
-showVal (Vector vector) = "#(" ++ (unwordsList $ V.toList vector) ++ ")"
-showVal (Float value) = show value 
-showVal (Ratio value) = show (numerator value) ++ "/" ++ show (denominator value)
-showVal (Complex value) = show (realPart value) ++ "+" ++ show (imagPart value) ++ "i"
-showVal (Character char) | char == '\n' = "#\\newline"
-                         | char == ' '  = "#\\space"
-                         | otherwise    = "#\\" ++ [char]
-
-unwordsList = unwords . map showVal
+                   Left err  -> throwError $ Parser err
+                   Right val -> return val
