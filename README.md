@@ -4,7 +4,3 @@
 ##Todo
  - Unboxed vectors
  - Upgrade to [interpreter 2.0](https://wespiser.com/writings/wyas/home.html)
- - remove dotted list predicate?
- - remove excess evals
- - add predicates for remaining types
- - remove weak types in Evaluator.unpackNum 

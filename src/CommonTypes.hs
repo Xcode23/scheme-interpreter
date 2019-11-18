@@ -1,15 +1,23 @@
 module CommonTypes 
   (LispVal(..), 
-  LispError(..),
-  ThrowsError,
-  trapError,
-  extractValue) where
+   LispError(..),
+   ThrowsError,
+   trapError,
+   extractValue,
+   Env,
+   IOThrowsError,
+   nullEnv,
+   liftThrows,
+   runIOThrows)
+  where
 
 import qualified Data.Vector as V
 import Data.Ratio
 import Data.Complex
 import Control.Monad.Except
 import Text.ParserCombinators.Parsec
+import Data.IORef
+import System.IO
 
 data LispVal  = Atom String
               | List [LispVal]
@@ -22,6 +30,11 @@ data LispVal  = Atom String
               | Float Double
               | Ratio Rational
               | Complex (Complex Double)
+              | PrimitiveFunc ([LispVal] -> ThrowsError LispVal)
+              | Func { params :: [String], vararg :: (Maybe String),
+                     body :: [LispVal], closure :: Env }
+              | IOFunc ([LispVal] -> IOThrowsError LispVal)
+              | Port Handle
 
 instance Show LispVal where show = showVal
 
@@ -29,7 +42,7 @@ showVal :: LispVal -> String
 showVal (String string) = "\"" ++ string ++ "\""
 showVal (Atom name) = name
 showVal (Number num) = show num
-showVal (Bool value) = if value then "#t" else "#false"
+showVal (Bool value) = if value then "#t" else "#f"
 showVal (List contents) = "(" ++ unwordsList contents ++ ")"
 showVal (DottedList head tail) = "(" ++ unwordsList head ++ " . " ++ showVal tail ++ ")"
 showVal (Vector vector) = "#(" ++ (unwordsList $ V.toList vector) ++ ")"
@@ -39,6 +52,15 @@ showVal (Complex value) = show (realPart value) ++ "+" ++ show (imagPart value) 
 showVal (Character char) | char == '\n' = "#\\newline"
                          | char == ' '  = "#\\space"
                          | otherwise    = "#\\" ++ [char]
+showVal (PrimitiveFunc _) = "<primitive>"
+showVal (Func {params = args, vararg = varargs, body = body, closure = env}) =
+     "(lambda (" ++ unwords (map show args) ++
+             (case varargs of
+                          Nothing -> ""
+                          Just arg -> " . " ++ arg) ++ ") ...)"
+showVal (Port _) = "<IO port>"
+showVal (IOFunc _) = "<IO primitve>"
+
 
 unwordsList = unwords . map showVal
 
@@ -69,3 +91,18 @@ trapError action = catchError action (return . show)
 
 extractValue :: ThrowsError a -> a
 extractValue (Right val) = val
+
+type Env = IORef [(String, IORef LispVal)]
+type IOThrowsError = ExceptT LispError IO
+
+nullEnv :: IO Env
+nullEnv = newIORef []
+
+liftThrows :: ThrowsError a -> IOThrowsError a
+liftThrows (Left err) = throwError err
+liftThrows (Right val) = return val
+
+runIOThrows :: IOThrowsError String -> IO String
+runIOThrows action = runExceptT (trapError action) >>= return . extractValue
+
+

@@ -1,73 +1,112 @@
-module Evaluator (eval) where
+module Evaluator
+  (eval,
+   primitiveBindings) 
+  where
 
 import CommonTypes
 import Control.Monad.Except
+import System.IO
+import Environment
+import Primitives
+import SchemeParser
+import qualified Data.Vector as V
 
-eval :: LispVal -> ThrowsError LispVal
-eval val@(String _) = return val
-eval val@(Number _) = return val
-eval val@(Bool _) = return val
-eval val@(Complex _) = return val
-eval val@(Ratio _) = return val
-eval val@(Character _) = return val
-eval val@(Float _) = return val
-eval val@(Vector _) = return val
-eval (List [Atom "quote", val]) = return val
-eval (List (Atom func : args)) = mapM eval args >>= apply func
-eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
+eval :: Env -> LispVal -> IOThrowsError LispVal
+eval env val@(String _) = return val
+eval env val@(Number _) = return val
+eval env val@(Bool _) = return val
+eval env val@(Complex _) = return val
+eval env val@(Ratio _) = return val
+eval env val@(Character _) = return val
+eval env val@(Float _) = return val
+eval env val@(Vector _) = return val
+eval env (Atom id) = getVar env id
+eval env (List [Atom "quote", val]) = return val
+eval env (List [Atom "if", pred, conseq, alt]) = do
+                                              result <- eval env pred
+                                              case result of
+                                                  Bool False -> eval env alt
+                                                  otherwise  -> eval env conseq
+eval env (List [Atom "set!", Atom var, form]) = eval env form >>= setVar env var
+eval env (List [Atom "define", Atom var, form]) = eval env form >>= defineVar env var
+eval env (List (Atom "define" : List (Atom var : params) : body)) =
+       makeNormalFunc env params body >>= defineVar env var
+eval env (List (Atom "define" : DottedList (Atom var : params) varargs : body)) =
+       makeVarArgs varargs env params body >>= defineVar env var
+eval env (List (Atom "lambda" : List params : body)) =
+     makeNormalFunc env params body
+eval env (List (Atom "lambda" : DottedList params varargs : body)) =
+     makeVarArgs varargs env params body
+eval env (List (Atom "lambda" : varargs@(Atom _) : body)) =
+       makeVarArgs varargs env [] body
+eval env (List [Atom "load", String filename]) = 
+     load filename >>= liftM last . mapM (eval env)
+eval env (List (function : args)) = do
+      func <- eval env function
+      argVals <- mapM (eval env) args
+      apply func argVals
+eval env badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
 
-apply :: String -> [LispVal] -> ThrowsError LispVal
-apply func args = maybe (throwError $ NotFunction "Unrecognized primitive function args" func) 
-                        ($ args)
-                        (lookup func primitives)
+makeFunc varargs env params body = return $ Func (map show params) varargs body env
+makeNormalFunc = makeFunc Nothing
+makeVarArgs = makeFunc . Just . show
 
-primitives :: [(String, [LispVal] -> ThrowsError LispVal)]
-primitives = [("+", numericBinop (+)),
-              ("-", numericBinop (-)),
-              ("*", numericBinop (*)),
-              ("/", numericBinop div),
-              ("mod", numericBinop mod),
-              ("quotient", numericBinop quot),
-              ("remainder", numericBinop rem),
-              ("symbol?" , unaryOp symbolp) ,
-              ("string?" , unaryOp stringp) ,
-              ("number?" , unaryOp numberp) ,
-              ("bool?", unaryOp boolp) ,
-              ("list?" , unaryOp listp)]
+apply :: LispVal -> [LispVal] -> IOThrowsError LispVal
+apply (PrimitiveFunc func) args = liftThrows $ func args
+apply (Func params varargs body closure) args =
+        if num params /= num args && varargs == Nothing
+          then throwError $ NumArgs (num params) args
+          else (liftIO $ bindVars closure $ zip params args) >>= bindVarArgs varargs >>= evalBody
+        where 
+          remainingArgs = drop (length params) args
+          num = toInteger . length
+          evalBody env = liftM last $ mapM (eval env) body
+          bindVarArgs arg env = case arg of
+            Just argName -> liftIO $ bindVars env [(argName, List $ remainingArgs)]
+            Nothing -> return env
+apply (IOFunc func) args = func args
 
-numericBinop :: (Integer ->  Integer -> Integer) -> [LispVal] -> ThrowsError LispVal
-numericBinop op []              = throwError $ NumArgs 2 []
-numericBinop op singleVal@[_]   = throwError $ NumArgs 2 singleVal 
-numericBinop op params          = mapM unpackNum params >>= return . Number . foldl1 op
+primitiveBindings :: IO Env
+primitiveBindings = nullEnv >>= (flip bindVars $ map (makeFunc IOFunc) ioPrimitives
+                                    ++ map (makeFunc PrimitiveFunc) primitives)
+     where makeFunc constructor (var, func) = (var, constructor func)
 
-unpackNum :: LispVal -> ThrowsError Integer
-unpackNum (Number n) = return n
-unpackNum (String s) = let parsed = reads s
-                        in if null parsed
-                            then throwError $ TypeMismatch "number" $ String s
-                            else return . fst . head $ parsed
-unpackNum (List [n]) = unpackNum n
-unpackNum notNum = throwError $ TypeMismatch "number" notNum 
+ioPrimitives :: [(String, [LispVal] -> IOThrowsError LispVal)]
+ioPrimitives = [("apply", applyProc),
+                ("open-input-file", makePort ReadMode),
+                ("open-output-file", makePort WriteMode),
+                ("close-input-port", closePort),
+                ("close-output-port", closePort),
+                ("read", readProc),
+                ("write", writeProc),
+                ("read-contents", readContents),
+                ("read-all", readAll)]
 
-unaryOp :: (LispVal -> LispVal) -> [LispVal] -> ThrowsError LispVal
-unaryOp f args = if length args /= 1 
-                    then throwError $ NumArgs 1 args
-                    else return . f . head $ args
+applyProc :: [LispVal] -> IOThrowsError LispVal
+applyProc [func, List args] = apply func args
+applyProc (func : args)     = apply func args
 
-symbolp (Atom _) = Bool True
-symbolp _ = Bool False 
-numberp (Number _) = Bool True 
-numberp _ = Bool False
-stringp (String _) = Bool True
-stringp _ = Bool False
-boolp (Bool _) = Bool True
-boolp _ = Bool False
-listp (List _) = Bool True
-listp (DottedList _ _) = Bool False
-listp _ = Bool False
+makePort :: IOMode -> [LispVal] -> IOThrowsError LispVal
+makePort mode [String filename] = liftM Port $ liftIO $ openFile filename mode
 
-symbol2string, string2symbol :: LispVal -> LispVal
-symbol2string (Atom s)   = String s
-symbol2string _          = String ""
-string2symbol (String s) = Atom s
-string2symbol _          = Atom ""
+closePort :: [LispVal] -> IOThrowsError LispVal
+closePort [Port port] = liftIO $ hClose port >> (return $ Bool True)
+closePort _           = return $ Bool False
+
+readProc :: [LispVal] -> IOThrowsError LispVal
+readProc []          = readProc [Port stdin]
+readProc [Port port] = (liftIO $ hGetLine port) >>= liftThrows . readExpr
+
+writeProc :: [LispVal] -> IOThrowsError LispVal
+writeProc [obj]            = writeProc [obj, Port stdout]
+writeProc [obj, Port port] = liftIO $ hPrint port obj >> (return $ Bool True)
+
+readContents :: [LispVal] -> IOThrowsError LispVal
+readContents [String filename] = liftM String $ liftIO $ readFile filename
+  
+load :: String -> IOThrowsError [LispVal]
+load filename = (liftIO $ readFile filename) >>= liftThrows . readExprList
+
+readAll :: [LispVal] -> IOThrowsError LispVal
+readAll [String filename] = liftM List $ load filename
+
